@@ -59,7 +59,7 @@ jobs:
       - name: Inject kernel cgroup config
         run: |
           cd openwrt
-          KERNEL_CFG=target/linux/qualcommax/ipq60xx/config-6.12
+          KERNEL_CFG=target/linux/qualcommax/ipq60xx/config-default
           cat >> $KERNEL_CFG << 'KERNEL_EOF'
           # === Docker / container runtime support ===
           CONFIG_CGROUPS=y
