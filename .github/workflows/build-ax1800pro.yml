@@ -1,0 +1,77 @@
+name: Build AX1800 Pro Firmware
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ax1800pro
+    paths:
+      - 'ax1800pro.config'
+      - '.github/workflows/build-ax1800pro.yml'
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: openwrt-24.10
+  CONFIG_FILE: ax1800pro.config
+  DEVICE_NAME: AX1800Pro
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 512
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang flex bison g++ gawk \
+          gettext git libncurses-dev libssl-dev \
+          python3 python3-pip python3-setuptools rsync swig unzip zlib1g-dev \
+          file wget quilt time ccache upx libelf-dev
+
+      - name: Clone source
+        run: |
+          git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Load config
+        run: |
+          cp -f ${{ github.workspace }}/$CONFIG_FILE openwrt/.config
+          cd openwrt
+          make defconfig
+
+      - name: Download packages
+        run: |
+          cd openwrt
+          make download -j$(nproc)
+
+      - name: Compile firmware
+        run: |
+          cd openwrt
+          make -j$(nproc) V=s
+
+      - name: Package artifacts
+        run: |
+          mkdir -p ${{ github.workspace }}/firmware
+          find openwrt/bin/targets -type f \( -name "*.img" -o -name "*.bin" -o -name "*.manifest" \) -exec cp {} ${{ github.workspace }}/firmware/ \;
+          
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DEVICE_NAME }}_Firmware
+          path: ${{ github.workspace }}/firmware/
