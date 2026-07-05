@@ -11,7 +11,7 @@ on:
 
 env:
   REPO_URL: https://github.com/kiddin9/openwrt-6.x
-  REPO_BRANCH: kernel-6.12
+  REPO_BRANCH: patch-13
   CONFIG_FILE: ax1800pro.config
   DEVICE_NAME: AX1800Pro
   TZ: Asia/Shanghai
