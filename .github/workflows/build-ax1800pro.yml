@@ -56,12 +56,54 @@ jobs:
           cd openwrt
           make defconfig
 
-      - name: Inject kernel cgroup config
+      - name: Fix kernel cgroup in .config after defconfig
         run: |
           cd openwrt
+          # Step A: Restore CONFIG_KERNEL_* that make defconfig may have dropped
+          cat >> .config << KCONF_EOF
+          CONFIG_KERNEL_CGROUPS=y
+          CONFIG_KERNEL_CGROUP_CPUACCT=y
+          CONFIG_KERNEL_CGROUP_DEVICE=y
+          CONFIG_KERNEL_CGROUP_FREEZER=y
+          CONFIG_KERNEL_CGROUP_NET_PRIO=y
+          CONFIG_KERNEL_CGROUP_PIDS=y
+          CONFIG_KERNEL_CGROUP_SCHED=y
+          CONFIG_KERNEL_CPUSETS=y
+          CONFIG_KERNEL_MEMCG=y
+          CONFIG_KERNEL_MEMCG_SWAP=y
+          CONFIG_KERNEL_MEMCG_KMEM=y
+          CONFIG_KERNEL_CGROUP_HUGETLB=y
+          CONFIG_KERNEL_CGROUP_BPF=y
+          CONFIG_KERNEL_BLK_CGROUP=y
+          CONFIG_KERNEL_CFS_BANDWIDTH=y
+          CONFIG_KERNEL_FAIR_GROUP_SCHED=y
+          CONFIG_KERNEL_RT_GROUP_SCHED=y
+          CONFIG_KERNEL_NET_CLS_CGROUP=y
+          CONFIG_KERNEL_NETPRIO_CGROUP=y
+          CONFIG_KERNEL_NAMESPACES=y
+          CONFIG_KERNEL_USER_NS=y
+          CONFIG_KERNEL_UTS_NS=y
+          CONFIG_KERNEL_IPC_NS=y
+          CONFIG_KERNEL_PID_NS=y
+          CONFIG_KERNEL_NET_NS=y
+          CONFIG_KERNEL_OVERLAY_FS=y
+          CONFIG_KERNEL_BRIDGE=y
+          CONFIG_KERNEL_BRIDGE_NETFILTER=y
+          CONFIG_KERNEL_VETH=y
+          CONFIG_KERNEL_VXLAN=y
+          CONFIG_KERNEL_NETFILTER_XT_MATCH_ADDRTYPE=y
+          KCONF_EOF
+          echo "=== .config CONFIG_KERNEL_CGROUPS ==="
+          grep "CONFIG_KERNEL_CGROUPS" .config || echo "MISSING!"
+          grep "CONFIG_KERNEL_NAMESPACES" .config || echo "MISSING!"
+
+      - name: Inject kernel config into all fragments
+        run: |
+          cd openwrt
+          # Step B: Inject into config-default (subtarget level)
           KERNEL_CFG=target/linux/qualcommax/ipq60xx/config-default
-          cat >> $KERNEL_CFG << 'KERNEL_EOF'
-          # === Docker / container runtime support ===
+          echo "=== Injecting into $KERNEL_CFG ==="
+          cat >> "$KERNEL_CFG" << KERNEL_EOF
           CONFIG_CGROUPS=y
           CONFIG_CGROUP_CPUACCT=y
           CONFIG_CGROUP_DEVICE=y
@@ -94,8 +136,79 @@ jobs:
           CONFIG_VXLAN=y
           CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
           KERNEL_EOF
-          echo "=== Injected kernel config (last 30 lines) ==="
+          echo "=== Injected into config-default (last 30 lines) ==="
           tail -30 $KERNEL_CFG
+
+      - name: Inject kernel config into generic/config-6.12
+        run: |
+          cd openwrt
+          # Step C: Also inject into generic/config-6.12 as redundancy
+          GENERIC_CFG=target/linux/generic/config-6.12
+          echo "=== Injecting into $GENERIC_CFG ==="
+          cat >> "$GENERIC_CFG" << KERNEL_EOF
+          CONFIG_CGROUPS=y
+          CONFIG_CGROUP_CPUACCT=y
+          CONFIG_CGROUP_DEVICE=y
+          CONFIG_CGROUP_FREEZER=y
+          CONFIG_CGROUP_NET_PRIO=y
+          CONFIG_CGROUP_PIDS=y
+          CONFIG_CGROUP_SCHED=y
+          CONFIG_CPUSETS=y
+          CONFIG_MEMCG=y
+          CONFIG_MEMCG_SWAP=y
+          CONFIG_MEMCG_KMEM=y
+          CONFIG_CGROUP_HUGETLB=y
+          CONFIG_CGROUP_BPF=y
+          CONFIG_BLK_CGROUP=y
+          CONFIG_CFS_BANDWIDTH=y
+          CONFIG_FAIR_GROUP_SCHED=y
+          CONFIG_RT_GROUP_SCHED=y
+          CONFIG_NAMESPACES=y
+          CONFIG_USER_NS=y
+          CONFIG_UTS_NS=y
+          CONFIG_IPC_NS=y
+          CONFIG_PID_NS=y
+          CONFIG_NET_NS=y
+          CONFIG_OVERLAY_FS=y
+          CONFIG_BRIDGE=y
+          CONFIG_BRIDGE_NETFILTER=y
+          CONFIG_VETH=y
+          CONFIG_VXLAN=y
+          KERNEL_EOF
+          echo "=== Injected into generic/config-6.12 (last 30 lines) ==="
+          tail -30 "$GENERIC_CFG"
+
+      - name: Verify kernel config before build
+        run: |
+          cd openwrt
+          # Force regeneration of kernel config
+          rm -f build_dir/target-aarch64_cortex-a53_musl/linux-qualcommax_ipq60xx/linux-6.*/.config.prev
+          # Start build with V=s for first few lines to check config
+          echo "=== Starting make to generate .config.set, then verifying ==="
+          make target/linux/compile V=s 2>&1 | tee /tmp/kernel_build.log &
+          BUILD_PID=$!
+          # Wait for config generation
+          sleep 120
+          # Check .config.set
+          KCFG=$(find build_dir -name ".config.set" -path "*/linux-qualcommax*" 2>/dev/null | head -1)
+          if [ -n "$KCFG" ]; then
+            echo "=== Found $KCFG ==="
+            echo "--- CGROUPS ---"
+            grep -E "^CONFIG_CGROUPS=" "$KCFG" || echo "MISSING!"
+            echo "--- NAMESPACES ---"
+            grep -E "^CONFIG_NAMESPACES=" "$KCFG" || echo "MISSING!"
+            echo "--- OVERLAY_FS ---"
+            grep -E "^CONFIG_OVERLAY_FS=" "$KCFG" || echo "MISSING!"
+            echo "--- MEMCG ---"
+            grep -E "^CONFIG_MEMCG=" "$KCFG" || echo "MISSING!"
+            echo "--- VETH ---"
+            grep -E "^CONFIG_VETH=" "$KCFG" || echo "MISSING!"
+          else
+            echo "WARNING: .config.set not found yet"
+          fi
+          # Kill the build since we just wanted config
+          kill $BUILD_PID 2>/dev/null || true
+          wait $BUILD_PID 2>/dev/null || true
 
       - name: Download packages
         run: |
